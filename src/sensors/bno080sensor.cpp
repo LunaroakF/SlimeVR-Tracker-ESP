@@ -208,6 +208,56 @@ void BNO080Sensor::motionLoop() {
 		} else {
 			if (imu.hasNewQuat())  // New quaternion if context
 			{
+				if (lastData - lastMagStatusCheck >= 5000) {
+					lastMagStatusCheck = lastData;
+					uint8_t newAccuracy = imu.getMagAccuracy();
+					const char* statusText;
+					switch (newAccuracy) {
+						case 0:
+							statusText = "Uncalibrated";
+							break;
+						case 1:
+							statusText = "Minimal Calibration";
+							break;
+						case 2:
+							statusText = "More Calibrated";
+							break;
+						case 3:
+							statusText = "Fully Calibrated";
+							// Save calibration when we reach full calibration
+							if (newAccuracy > magCalibrationAccuracy) {
+								m_Logger.info(
+									"Reached full calibration - saving calibration data"
+								);
+								imu.saveCalibration();
+							}
+							break;
+						default:
+							statusText = "Unknown";
+					}
+
+					// Only log if accuracy changed
+					if (newAccuracy != magCalibrationAccuracy) {
+						magCalibrationAccuracy = newAccuracy;
+						m_Logger.info(
+							"Magnetometer Calibration Status: %s (Level %d/3)",
+							statusText,
+							magCalibrationAccuracy
+						);
+					} else {
+						m_Logger.info(
+							"Magnetometer Status Check - Current Status: %s (Level "
+							"%d/3)",
+							statusText,
+							magCalibrationAccuracy
+						);
+					}
+
+					// If accuracy drops below 2, start recalibration
+					if (magCalibrationAccuracy < 2) {
+						imu.sendCalibrateCommand(SENSOR_REPORTID_MAGNETIC_FIELD);
+					}
+				}
 				Quat nRotation;
 				imu.getQuat(
 					nRotation.x,

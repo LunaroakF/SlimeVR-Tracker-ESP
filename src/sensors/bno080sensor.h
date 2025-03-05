@@ -84,6 +84,7 @@ private:
 
 	uint8_t tap;
 	unsigned long lastData = 0;
+	unsigned long lastMagStatusCheck = 0;
 	uint8_t lastReset = 0;
 	BNO080Error lastError{};
 	SlimeVR::Configuration::BNO0XXSensorConfig m_Config = {};
