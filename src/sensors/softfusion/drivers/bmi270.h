@@ -30,7 +30,6 @@
 #include <limits>
 
 #include "bmi270fw.h"
-#include "vqf.h"
 
 namespace SlimeVR::Sensors::SoftFusion::Drivers {
 
@@ -52,16 +51,6 @@ struct BMI270 {
 
 	static constexpr float GyroSensitivity = 32.768f;
 	static constexpr float AccelSensitivity = 2048.0f;
-
-	static constexpr float TemperatureZROChange = 6.667f;
-
-	static constexpr VQFParams SensorVQFParams{
-		.motionBiasEstEnabled = true,
-		.biasSigmaInit = 0.5f,
-		.biasClip = 1.0f,
-		.restThGyr = 0.5f,
-		.restThAcc = 0.196f,
-	};
 
 	struct MotionlessCalibrationData {
 		bool valid;
@@ -325,7 +314,7 @@ struct BMI270 {
 		return true;
 	}
 
-	bool motionlessCalibration(MotionlessCalibrationData& gyroSensitivity) {
+	void motionlessCalibration(MotionlessCalibrationData& gyroSensitivity) {
 		// perfrom gyroscope motionless sensitivity calibration (CRT)
 		// need to start from clean state according to spec
 		restartAndInit();
@@ -351,8 +340,6 @@ struct BMI270 {
 		i2c.writeReg(Regs::PwrCtrl::reg, Regs::PwrCtrl::valueGyrAccTempOn);
 		delay(100);
 
-		bool success;
-
 		if (status != 0) {
 			logger.error(
 				"CRT failed with status 0x%x. Recalibrate again to enable CRT.",
@@ -361,8 +348,6 @@ struct BMI270 {
 			if (status == 0x03) {
 				logger.error("Reason: tracker was moved during CRT!");
 			}
-
-			success = false;
 		} else {
 			std::array<uint8_t, 3> crt_values;
 			i2c.readBytes(Regs::GyrUserGain, crt_values.size(), crt_values.data());
@@ -376,8 +361,6 @@ struct BMI270 {
 			gyroSensitivity.x = crt_values[0];
 			gyroSensitivity.y = crt_values[1];
 			gyroSensitivity.z = crt_values[2];
-
-			success = true;
 		}
 
 		// CRT seems to leave some state behind which isn't persisted after
@@ -386,8 +369,6 @@ struct BMI270 {
 		restartAndInit();
 
 		setNormalConfig(gyroSensitivity);
-
-		return success;
 	}
 
 	float getDirectTemp() const {
@@ -410,12 +391,8 @@ struct BMI270 {
 		return to_ret;
 	}
 
-	template <typename AccelCall, typename GyroCall, typename TempCall>
-	void bulkRead(
-		AccelCall&& processAccelSample,
-		GyroCall&& processGyroSample,
-		TempCall&& processTempSample
-	) {
+	template <typename AccelCall, typename GyroCall>
+	void bulkRead(AccelCall&& processAccelSample, GyroCall&& processGyroSample) {
 		const auto fifo_bytes = i2c.readReg16(Regs::FifoCount);
 
 		const auto bytes_to_read = std::min(

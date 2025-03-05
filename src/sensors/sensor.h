@@ -141,7 +141,7 @@ protected:
 private:
 	void printTemperatureCalibrationUnsupported();
 
-	bool restCalibrationComplete = false;
+	bool restCalibrationComplete;
 };
 
 const char* getIMUNameByType(SensorTypeID imuType);

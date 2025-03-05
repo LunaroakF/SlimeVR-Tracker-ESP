@@ -30,7 +30,7 @@ namespace SlimeVR::Sensors::SoftFusion::Drivers {
 // and gyroscope range at 4000dps
 // using high resolution mode
 // Uses 32.768kHz clock
-// Gyroscope ODR = 409.6Hz, accel ODR = 102.4Hz
+// Gyroscope ODR = 409.6Hz, accel ODR = 204.8Hz
 // Timestamps reading not used, as they're useless (constant predefined increment)
 
 template <typename I2CImpl>
@@ -38,7 +38,7 @@ struct ICM45Base {
 	static constexpr uint8_t Address = 0x68;
 
 	static constexpr float GyrTs = 1.0 / 409.6;
-	static constexpr float AccTs = 1.0 / 102.4;
+	static constexpr float AccTs = 1.0 / 204.8;
 	static constexpr float TempTs = 1.0 / 409.6;
 
 	static constexpr float MagTs = 1.0 / 100;
@@ -48,8 +48,6 @@ struct ICM45Base {
 
 	static constexpr float TemperatureBias = 25.0f;
 	static constexpr float TemperatureSensitivity = 128.0f;
-
-	static constexpr float TemperatureZROChange = 20.0f;
 
 	static constexpr bool Uses32BitSensorData = true;
 
@@ -76,7 +74,7 @@ struct ICM45Base {
 		struct AccelConfig {
 			static constexpr uint8_t reg = 0x1b;
 			static constexpr uint8_t value
-				= (0b000 << 4) | 0b1001;  // 32g, odr = 102.4Hz
+				= (0b000 << 4) | 0b1000;  // 32g, odr = 204.8Hz
 		};
 
 		struct FifoConfig0 {
@@ -108,11 +106,16 @@ struct ICM45Base {
 
 #pragma pack(push, 1)
 	struct FifoEntryAligned {
-		int16_t accel[3];
-		int16_t gyro[3];
-		uint16_t temp;
-		uint16_t timestamp;
-		uint8_t lsb[3];
+		union {
+			struct {
+				int16_t accel[3];
+				int16_t gyro[3];
+				uint16_t temp;
+				uint16_t timestamp;
+				uint8_t lsb[3];
+			} part;
+			uint8_t raw[19];
+		};
 	};
 #pragma pack(pop)
 
@@ -135,12 +138,14 @@ struct ICM45Base {
 		return true;
 	}
 
-	template <typename AccelCall, typename GyroCall, typename TempCall>
-	void bulkRead(
-		AccelCall&& processAccelSample,
-		GyroCall&& processGyroSample,
-		TempCall&& processTemperatureSample
-	) {
+	float getDirectTemp() const {
+		const auto value = static_cast<int16_t>(i2c.readReg16(BaseRegs::TempData));
+		float result = ((float)value / 132.48f) + 25.0f;
+		return result;
+	}
+
+	template <typename AccelCall, typename GyroCall>
+	void bulkRead(AccelCall&& processAccelSample, GyroCall&& processGyroSample) {
 		const auto fifo_packets = i2c.readReg16(BaseRegs::FifoCount);
 		const auto fifo_bytes = fifo_packets * sizeof(FullFifoEntrySize);
 
@@ -154,34 +159,33 @@ struct ICM45Base {
 		for (auto i = 0u; i < bytes_to_read; i += FullFifoEntrySize) {
 			FifoEntryAligned entry;
 			memcpy(
-				&entry,
+				entry.raw,
 				&read_buffer[i + 0x1],
 				sizeof(FifoEntryAligned)
 			);  // skip fifo header
 			const int32_t gyroData[3]{
-				static_cast<int32_t>(entry.gyro[0]) << 4 | (entry.lsb[0] & 0xf),
-				static_cast<int32_t>(entry.gyro[1]) << 4 | (entry.lsb[1] & 0xf),
-				static_cast<int32_t>(entry.gyro[2]) << 4 | (entry.lsb[2] & 0xf),
+				static_cast<int32_t>(entry.part.gyro[0]) << 4
+					| (entry.part.lsb[0] & 0xf),
+				static_cast<int32_t>(entry.part.gyro[1]) << 4
+					| (entry.part.lsb[1] & 0xf),
+				static_cast<int32_t>(entry.part.gyro[2]) << 4
+					| (entry.part.lsb[2] & 0xf),
 			};
 			processGyroSample(gyroData, GyrTs);
 
-			if (entry.accel[0] != -32768) {
+			if (entry.part.accel[0] != -32768) {
 				const int32_t accelData[3]{
-					static_cast<int32_t>(entry.accel[0]) << 4
-						| (static_cast<int32_t>(entry.lsb[0]) & 0xf0 >> 4),
-					static_cast<int32_t>(entry.accel[1]) << 4
-						| (static_cast<int32_t>(entry.lsb[1]) & 0xf0 >> 4),
-					static_cast<int32_t>(entry.accel[2]) << 4
-						| (static_cast<int32_t>(entry.lsb[2]) & 0xf0 >> 4),
+					static_cast<int32_t>(entry.part.accel[0]) << 4
+						| (static_cast<int32_t>(entry.part.lsb[0]) & 0xf0 >> 4),
+					static_cast<int32_t>(entry.part.accel[1]) << 4
+						| (static_cast<int32_t>(entry.part.lsb[1]) & 0xf0 >> 4),
+					static_cast<int32_t>(entry.part.accel[2]) << 4
+						| (static_cast<int32_t>(entry.part.lsb[2]) & 0xf0 >> 4),
 				};
 				processAccelSample(accelData, AccTs);
-			}
-
-			if (entry.temp != 0x8000) {
-				processTemperatureSample(static_cast<int16_t>(entry.temp), TempTs);
 			}
 		}
 	}
 };
 
-};  // namespace SlimeVR::Sensors::SoftFusion::Drivers
+}  // namespace SlimeVR::Sensors::SoftFusion::Drivers
